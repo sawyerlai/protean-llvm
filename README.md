@@ -1,3 +1,21 @@
+build & compile a program with the following commands:
+
+CLANG=llvm/build/bin/clang
+
+# ARCH (no-op effectively)
+$CLANG -O2 -mllvm -x86-ptex=arch simple_example.c -o out_arch
+
+# Static constant-time
+$CLANG -O2 -mllvm -x86-ptex=cts simple_example.c -o out_cts
+
+# Constant-time
+$CLANG -O2 -mllvm -x86-ptex=ct simple_example.c -o out_ct
+
+# Unrestricted (maximum protection)
+$CLANG -O2 -mllvm -x86-ptex=unr simple_example.c -o out_unr
+
+
+
 # The Protean Spectre Defense
 This repository contains the source code for a prototype of Protean,
 as presented in the HPCA'26 paper _Protean: A Programmalbe Spectre Defense_.
