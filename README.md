@@ -1,3 +1,22 @@
+# HOW TO RUN PROTEAN:
+(or, at least, this is what worked for me)
+
+`$CLANG=llvm/build/bin/clang`
+
+`$CLANG -O2 -S -emit-llvm protean_ex.c -o protean_ex.ll`
+
+Then, create a copy of the .ll file to hold the annotated version (I called my annotated_protean_ex.ll). Annotate the file with void declarations (see annotated_protean_ex.ll for examples).
+
+Then, run the protean pass over the unedited and the annotated .ll files:
+
+`/protean/llvm/build/bin/clang -O2   -mllvm -x86-ptex=ct   protean_ex.ll -o out_ct`
+
+`/protean/llvm/build/bin/clang   -O2   -no-pie   -mllvm -x86-ptex=cts   annotated_protean_ex.ll -o out_cts_annotated`
+
+The two outputs can be dumped with `objdump -d file_name`
+
+# OTHER HELPFUL THINGS:
+
 build & compile a program with the following commands:
 
 CLANG=llvm/build/bin/clang
