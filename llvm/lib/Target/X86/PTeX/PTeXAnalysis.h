@@ -45,10 +45,8 @@ protected:
   void initMachineMemOperands(MachineInstr &MI);
   void initAnnotatedPublicAccesses(MachineInstr &MI);
   void initDeclassifyAnnotations(MachineInstr &MI);
-  void cleanupOrphanedMoves(Register Reg,
-                          MachineBasicBlock::iterator ForwardBoundary,
-                          MachineBasicBlock &MBB);
   bool forward();
+
   bool backward();
   bool fixup();
   bool branch();
