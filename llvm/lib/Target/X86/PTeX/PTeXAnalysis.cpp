@@ -306,6 +306,41 @@ void PTeXAnalysis::initAnnotatedPublicAccesses(MachineInstr &MI) {
   }
 }
 
+// added for annotation processing
+void PTeXAnalysis::initDeclassifyAnnotations(MachineInstr &MI) {
+  if (!MI.isCall())
+    return;
+
+  const MachineOperand &CalleeMO = MI.getOperand(0);
+  if (!CalleeMO.isGlobal())
+    return;
+
+  const GlobalValue *GV = CalleeMO.getGlobal();
+  if (!GV->getName().startswith("llvm.protean.declassify"))
+    return;
+
+  errs() << "[declassify] found annotation call: " << GV->getName() << "\n";
+  errs() << "[declassify]   instruction: " << MI << "\n";
+
+  for (MachineOperand &MO : MI.operands()) {
+    if (!MO.isReg() || MO.isRegMask())
+      continue;
+    if (!MO.getReg().isValid())
+      continue;
+    Register Reg = MO.getReg();
+    if (Reg == X86::RSP || Reg == X86::SSP || Reg == X86::EFLAGS)
+      continue;
+
+    errs() << "[declassify]   marking public: "
+           << MI.getParent()->getParent()->getSubtarget()
+                .getRegisterInfo()->getRegAsmName(Reg)
+           << "\n";
+    markOpPublic(MO);
+  }
+
+  errs() << "[declassify]   done.\n";
+}
+
 void PTeXAnalysis::init() {
   // Init pub-in and pub-out maps.
   for (MachineBasicBlock &MBB : MF) {
@@ -329,6 +364,7 @@ void PTeXAnalysis::init() {
       initGOTLoads(MI);
       initMachineMemOperands(MI);
       initAnnotatedPublicAccesses(MI);
+      initDeclassifyAnnotations(MI);	// added for annotation processing
     }
   }
 
@@ -372,9 +408,31 @@ bool PTeXAnalysis::branch() {
   return Branch.run();
 }
 
+
 void PTeXAnalysis::run() {
   init();
+  
+  // added for annotation processing
+  for (MachineBasicBlock &MBB : MF) {
+    for (auto MBBI = MBB.begin(); MBBI != MBB.end(); ) {
+      MachineInstr &MI = *MBBI;
+      ++MBBI;
 
+      if (!MI.isCall()) continue;
+
+      const MachineOperand &CalleeMO = MI.getOperand(0);
+      if (!CalleeMO.isGlobal()) continue;
+      if (!CalleeMO.getGlobal()->getName().startswith("llvm.protean.declassify"))
+        continue;
+
+      errs() << "[declassify] removing: "
+             << CalleeMO.getGlobal()->getName() << "\n";
+
+      MF.eraseCallSiteInfo(&MI);
+      MI.eraseFromParent();
+    }
+  } 
+ 
   LLVM_DEBUG(dbgs() << "==== init ====\n");
   LLVM_DEBUG(print(dbgs()));
 
