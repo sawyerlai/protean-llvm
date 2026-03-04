@@ -306,6 +306,44 @@ void PTeXAnalysis::initAnnotatedPublicAccesses(MachineInstr &MI) {
   }
 }
 
+// added for annotation processing
+void PTeXAnalysis::initDeclassifyAnnotations(MachineInstr &MI) {
+  if (!MI.isCall())
+    return;
+
+  const MachineOperand &CalleeMO = MI.getOperand(0);
+  if (!CalleeMO.isGlobal())
+    return;
+
+  const GlobalValue *GV = CalleeMO.getGlobal();
+  if (!GV->getName().startswith("llvm.protean.declassify"))
+    return;
+
+  errs() << "[declassify] found annotation call: " << GV->getName() << "\n";
+  errs() << "[declassify]   instruction: " << MI << "\n";
+
+  for (MachineOperand &MO : MI.operands()) {
+    // Skip non-register and regmask operands
+    if (!MO.isReg() || MO.isRegMask())
+      continue;
+    // Skip invalid registers
+    if (!MO.getReg().isValid())
+      continue;
+    // Skip stack/shadow stack/flags — not semantically meaningful to mark public
+    Register Reg = MO.getReg();
+    if (Reg == X86::RSP || Reg == X86::SSP || Reg == X86::EFLAGS)
+      continue;
+
+    errs() << "[declassify]   marking public: "
+           << MI.getParent()->getParent()->getSubtarget()
+                .getRegisterInfo()->getRegAsmName(Reg)
+           << "\n";
+    markOpPublic(MO);
+  }
+
+  errs() << "[declassify]   done.\n";
+}
+
 void PTeXAnalysis::init() {
   // Init pub-in and pub-out maps.
   for (MachineBasicBlock &MBB : MF) {
@@ -329,6 +367,7 @@ void PTeXAnalysis::init() {
       initGOTLoads(MI);
       initMachineMemOperands(MI);
       initAnnotatedPublicAccesses(MI);
+      initDeclassifyAnnotations(MI);	// added for annotation processing
     }
   }
 
@@ -372,9 +411,94 @@ bool PTeXAnalysis::branch() {
   return Branch.run();
 }
 
+void PTeXAnalysis::cleanupOrphanedMoves(Register Reg,
+                                         MachineBasicBlock::iterator ForwardBoundary,
+                                         MachineBasicBlock &MBB) {
+  const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
+  SmallVector<MachineInstr *, 4> ToErase;
+
+  auto It = ForwardBoundary;
+  while (It != MBB.begin()) {
+    --It;
+    MachineInstr &Prev = *It;
+
+    if (Prev.mayStore() || Prev.isCall() || Prev.hasUnmodeledSideEffects())
+      break;
+
+    bool definesScanReg = false;
+    for (const MachineOperand &MO : Prev.operands()) {
+      if (MO.isReg() && MO.isDef() && !MO.isImplicit() &&
+          TRI->regsOverlap(MO.getReg(), Reg)) {
+        definesScanReg = true;
+        break;
+      }
+    }
+    if (!definesScanReg)
+      continue;
+
+    // Inline liveness check -- all defs of this instruction must be
+    // dead after it for us to safely remove it
+    bool allDefsDead = true;
+    for (const MachineOperand &DefMO : Prev.operands()) {
+      if (!DefMO.isReg() || !DefMO.isDef() || DefMO.isImplicit())
+        continue;
+      // Scan forward from the instruction after Prev to end of block
+      bool dead = true;
+      for (auto ScanIt = std::next(It); ScanIt != MBB.end(); ++ScanIt) {
+        for (const MachineOperand &MO : ScanIt->operands()) {
+          if (!MO.isReg() || !TRI->regsOverlap(MO.getReg(), DefMO.getReg()))
+            continue;
+          if (MO.isUse() && !MO.isUndef()) {
+            dead = false;  // register is read -- not dead
+            break;
+          }
+          if (MO.isDef()) {
+            dead = true;   // overwritten before read -- dead
+            break;
+          }
+        }
+        if (!dead) break;
+      }
+      if (!dead) {
+        allDefsDead = false;
+        break;
+      }
+    }
+    if (!allDefsDead)
+      break;
+
+    errs() << "[declassify] removing dead setup move: " << Prev << "\n";
+    ToErase.push_back(&Prev);
+  }
+
+  for (MachineInstr *Dead : ToErase)
+    Dead->eraseFromParent();
+}
+
 void PTeXAnalysis::run() {
   init();
+  
+  // added for annotation processing
+  for (MachineBasicBlock &MBB : MF) {
+    for (auto MBBI = MBB.begin(); MBBI != MBB.end(); ) {
+      MachineInstr &MI = *MBBI;
+      ++MBBI;
 
+      if (!MI.isCall()) continue;
+
+      const MachineOperand &CalleeMO = MI.getOperand(0);
+      if (!CalleeMO.isGlobal()) continue;
+      if (!CalleeMO.getGlobal()->getName().startswith("llvm.protean.declassify"))
+        continue;
+
+      errs() << "[declassify] removing: "
+             << CalleeMO.getGlobal()->getName() << "\n";
+
+      MF.eraseCallSiteInfo(&MI);
+      MI.eraseFromParent();
+    }
+  } 
+ 
   LLVM_DEBUG(dbgs() << "==== init ====\n");
   LLVM_DEBUG(print(dbgs()));
 
