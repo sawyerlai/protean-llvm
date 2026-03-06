@@ -1,0 +1,91 @@
+Protean + Declassiflow: Baseline vs Declassified Disassembly Comparison
+========================================================================
+Compiler: Protean LLVM 17.0.6 (clang -O2 -mllvm -x86-ptex=ct)
+Branch: sawyer-declassify
+"ss" prefix = PROT (SS segment override, 0x36)
+
+================================================================================
+br_dec32le (BearSSL) — Baseline: 1 PROT → Annotated: 0 PROT (100% reduction)
+================================================================================
+
+--- BASELINE ---
+0000000000000000 <br_dec32le>:
+   0:   48 89 ff                mov    %rdi,%rdi
+   3:   36 8b 07                ss mov (%rdi),%eax       <-- PROT
+   6:   c3                      ret
+
+--- ANNOTATED (Declassified) ---
+0000000000000000 <br_dec32le>:
+   0:   50                      push   %rax
+   1:   48 89 ff                mov    %rdi,%rdi
+   4:   8b 07                   mov    (%rdi),%eax       <-- no PROT
+   6:   59                      pop    %rcx
+   7:   c3                      ret
+
+================================================================================
+br_enc32le (BearSSL) — Baseline: 0 PROT → Annotated: 0 PROT (N/A)
+================================================================================
+
+--- BASELINE ---
+0000000000000000 <br_enc32le>:
+   0:   48 89 ff                mov    %rdi,%rdi
+   3:   89 37                   mov    %esi,(%rdi)
+   5:   c3                      ret
+
+--- ANNOTATED (Declassified) ---
+0000000000000000 <br_enc32le>:
+   0:   50                      push   %rax
+   1:   89 f6                   mov    %esi,%esi
+   3:   48 89 ff                mov    %rdi,%rdi
+   6:   48 89 f8                mov    %rdi,%rax
+   9:   48 89 c1                mov    %rax,%rcx
+   c:   89 f7                   mov    %esi,%edi
+   e:   89 39                   mov    %edi,(%rcx)
+  10:   58                      pop    %rax
+  11:   c3                      ret
+
+================================================================================
+int32_minmax (djbsort) — Baseline: 11 PROT → Annotated: 0 PROT (100% reduction)
+================================================================================
+
+--- BASELINE ---
+0000000000000000 <int32_minmax>:
+   0:   48 89 f6                mov    %rsi,%rsi
+   3:   36 8b 06                ss mov (%rsi),%eax       <-- PROT
+   6:   36 89 c1                ss mov %eax,%ecx         <-- PROT
+   9:   36 31 f9                ss xor %edi,%ecx         <-- PROT
+   c:   36 89 c2                ss mov %eax,%edx         <-- PROT
+   f:   36 29 fa                ss sub %edi,%edx         <-- PROT
+  12:   36 41 89 d0             ss mov %edx,%r8d         <-- PROT
+  16:   36 41 31 c0             ss xor %eax,%r8d         <-- PROT
+  1a:   36 41 21 c8             ss and %ecx,%r8d         <-- PROT
+  1e:   36 41 31 d0             ss xor %edx,%r8d         <-- PROT
+  22:   36 0f 49 c7             ss cmovns %edi,%eax      <-- PROT
+  26:   36 31 c1                ss xor %eax,%ecx         <-- PROT
+  29:   89 0e                   mov    %ecx,(%rsi)
+  2b:   c3                      ret
+
+--- ANNOTATED (Declassified) ---
+0000000000000000 <int32_minmax>:
+   0:   50                      push   %rax
+   1:   48 89 f6                mov    %rsi,%rsi
+   4:   89 ff                   mov    %edi,%edi
+   6:   89 f8                   mov    %edi,%eax
+   8:   89 c1                   mov    %eax,%ecx
+   a:   48 89 f7                mov    %rsi,%rdi
+   d:   48 89 f8                mov    %rdi,%rax
+  10:   8b 17                   mov    (%rdi),%edx       <-- no PROT
+  12:   89 d6                   mov    %edx,%esi         <-- no PROT
+  14:   31 ce                   xor    %ecx,%esi         <-- no PROT
+  16:   89 d7                   mov    %edx,%edi         <-- no PROT
+  18:   29 cf                   sub    %ecx,%edi         <-- no PROT
+  1a:   41 89 f8                mov    %edi,%r8d         <-- no PROT
+  1d:   41 31 d0                xor    %edx,%r8d         <-- no PROT
+  20:   41 21 f0                and    %esi,%r8d         <-- no PROT
+  23:   41 31 f8                xor    %edi,%r8d         <-- no PROT
+  26:   0f 48 ca                cmovs  %edx,%ecx         <-- no PROT
+  29:   31 ce                   xor    %ecx,%esi         <-- no PROT
+  2b:   89 30                   mov    %esi,(%rax)
+  2d:   89 c8                   mov    %ecx,%eax
+  2f:   59                      pop    %rcx
+  30:   c3                      ret

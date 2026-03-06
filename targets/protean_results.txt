@@ -1,0 +1,33 @@
+=== Protean + Declassiflow Results (Fixed Implementation) ===
+Date: $(date)
+Compiler: /protean/llvm/build/bin/clang (Protean LLVM 17.0.6)
+Branch: sawyer-declassify
+Mode: CT (constant-time)
+Approach: preserve_allcc return-value calls + backward walk with copy chain
+          following + forward load walk + existing forward() dataflow propagation
+
+--- Summary ---
+Function            | Baseline PROT | Annotated PROT | Reduction
+--------------------|---------------|----------------|-----------
+br_dec32le          |       1       |       0        | 100% (1→0)
+br_enc32le          |       0       |       0        |  N/A (0→0)
+int32_minmax        |      11       |       0        | 100% (11→0)
+
+--- Regression Check (unannotated baselines unchanged) ---
+target_br_dec32le.ll:   1 PROT (expected 1)  ✓
+target_br_enc32le.ll:   0 PROT (expected 0)  ✓
+target_int32_minmax.ll: 11 PROT (expected 11) ✓
+
+--- Implementation Notes ---
+Key insight: ForwardAnalysis::dataUsesPublic() returns false for mayLoad()
+instructions, so load DEFs never become public through forward() alone.
+The fix seeds load DEFs as public explicitly during COPY replacement
+when the load's base/index address is the declassified register.
+The backward walk with copy chain following seeds defining instruction
+DEFs so forward() propagates publicness through arithmetic chains.
+
+--- Known Overhead ---
+preserve_allcc calling convention adds COPY instructions (push/pop, mov
+register shuffles) for the annotation calls. For int32_minmax, the
+annotated version has 0 PROT but more instruction bytes (49 vs 44).
+However, PROT prefixes are the critical overhead in Protean's threat model.

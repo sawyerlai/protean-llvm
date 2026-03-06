@@ -1,0 +1,54 @@
+; Annotated br_enc32le — Declassiflow fully_declassified: true
+; Knowledge frontier: all transmitted values at br_enc32le::3
+; Declassify: ptr arg %0 and i32 arg %1 (function parameters, visible to caller)
+;
+; Declassiflow Phase 4 output:
+;   transmitted_vals: ["%3", "%4"]
+;   leaked_arg_idxs: []
+;   fully_declassified: true
+;   degenerate_case: true
+
+source_filename = "target_br_enc32le.c"
+target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
+target triple = "x86_64-unknown-linux-gnu"
+
+declare preserve_allcc ptr @llvm.protean.declassify.p0(ptr)
+declare preserve_allcc i32 @llvm.protean.declassify.i32(i32)
+
+; Function Attrs: mustprogress nofree noinline norecurse nosync nounwind willreturn memory(argmem: write) uwtable
+define dso_local void @br_enc32le(ptr nocapture noundef writeonly %0, i32 noundef %1) local_unnamed_addr #0 {
+  ;; Knowledge frontier: declassify both function parameters.
+  ;; Declassiflow proved all transmitted values are non-secret.
+  %dst.pub = call preserve_allcc ptr @llvm.protean.declassify.p0(ptr %0)
+  %x.pub = call preserve_allcc i32 @llvm.protean.declassify.i32(i32 %1)
+
+  %3 = trunc i32 %x.pub to i8
+  store i8 %3, ptr %dst.pub, align 1, !tbaa !5
+  %4 = lshr i32 %x.pub, 8
+  %5 = trunc i32 %4 to i8
+  %6 = getelementptr inbounds i8, ptr %dst.pub, i64 1
+  store i8 %5, ptr %6, align 1, !tbaa !5
+  %7 = lshr i32 %x.pub, 16
+  %8 = trunc i32 %7 to i8
+  %9 = getelementptr inbounds i8, ptr %dst.pub, i64 2
+  store i8 %8, ptr %9, align 1, !tbaa !5
+  %10 = lshr i32 %x.pub, 24
+  %11 = trunc i32 %10 to i8
+  %12 = getelementptr inbounds i8, ptr %dst.pub, i64 3
+  store i8 %11, ptr %12, align 1, !tbaa !5
+  ret void
+}
+
+attributes #0 = { mustprogress nofree noinline norecurse nosync nounwind willreturn memory(argmem: write) uwtable "min-legal-vector-width"="0" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+cmov,+cx8,+fxsr,+mmx,+sse,+sse2,+x87" "tune-cpu"="generic" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!llvm.ident = !{!4}
+
+!0 = !{i32 1, !"wchar_size", i32 4}
+!1 = !{i32 8, !"PIC Level", i32 2}
+!2 = !{i32 7, !"PIE Level", i32 2}
+!3 = !{i32 7, !"uwtable", i32 2}
+!4 = !{!"clang version 17.0.6 (https://github.com/StanfordPLArchSec/protean-llvm.git 7599a5138d3c6b1b3e4e4f4ee175c3922bf6a87e)"}
+!5 = !{!6, !6, i64 0}
+!6 = !{!"omnipotent char", !7, i64 0}
+!7 = !{!"Simple C/C++ TBAA"}
