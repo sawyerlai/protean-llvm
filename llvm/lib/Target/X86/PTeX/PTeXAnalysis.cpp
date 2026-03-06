@@ -5,6 +5,7 @@
 #include "X86.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/CodeGen/LivePhysRegs.h"
+#include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/Function.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
@@ -306,6 +307,83 @@ void PTeXAnalysis::initAnnotatedPublicAccesses(MachineInstr &MI) {
   }
 }
 
+// Declassiflow knowledge-frontier annotation handler.
+// Recognises calls to @llvm.protean.declassify.* and marks register
+// operands as public. Walks backward to find the defining instruction
+// of each register and marks its DEFs public too — this seeds the
+// existing forward() dataflow pass so publicness propagates through
+// all downstream consumers (arithmetic, copies, dependent loads, etc.).
+void PTeXAnalysis::initDeclassifyAnnotations(MachineInstr &MI) {
+  if (!MI.isCall())
+    return;
+
+  const MachineOperand &CalleeMO = MI.getOperand(0);
+  if (!CalleeMO.isGlobal())
+    return;
+
+  const GlobalValue *GV = CalleeMO.getGlobal();
+  if (!GV->getName().starts_with("llvm.protean.declassify"))
+    return;
+
+  errs() << "[declassify] found annotation call: " << GV->getName() << "\n";
+  errs() << "[declassify]   instruction: " << MI << "\n";
+
+  MachineBasicBlock *MBB = MI.getParent();
+
+  for (MachineOperand &MO : MI.operands()) {
+    if (!MO.isReg() || MO.isRegMask())
+      continue;
+    if (!MO.getReg().isValid())
+      continue;
+    Register Reg = MO.getReg();
+    if (Reg == X86::RSP || Reg == X86::SSP || Reg == X86::EFLAGS)
+      continue;
+
+    errs() << "[declassify]   marking public at call site: "
+           << TRI->getRegAsmName(Reg) << "\n";
+    markOpPublic(MO);
+
+    // Walk backwards from the annotation call to find the instruction
+    // that defines this register and mark its DEF public too.
+    // This seeds the forward dataflow so publicness propagates through
+    // all downstream consumers (arithmetic, copies, dependent loads, etc.).
+    Register WalkReg = Reg;
+    auto It = MI.getIterator();
+    while (It != MBB->begin()) {
+      --It;
+      MachineInstr &DefMI = *It;
+      bool FoundDef = false;
+      for (MachineOperand &DefMO : DefMI.operands()) {
+        if (!DefMO.isReg() || !DefMO.isDef() || DefMO.isImplicit())
+          continue;
+        if (!TRI->regsOverlap(DefMO.getReg(), WalkReg))
+          continue;
+        // Found the defining instruction. Mark its output public.
+        errs() << "[declassify]   marking defining DEF public: "
+               << TRI->getRegAsmName(DefMO.getReg())
+               << " in: " << DefMI;
+        markOpPublic(DefMO);
+        FoundDef = true;
+      }
+      if (FoundDef) {
+        // If DefMI is just a copy, follow the copy source backward
+        // to mark the entire chain public so forward() sees the full
+        // public extent through calling-convention copy chains.
+        if (DefMI.isCopy()) {
+          WalkReg = DefMI.getOperand(1).getReg();
+          errs() << "[declassify]   following copy chain: "
+                 << TRI->getRegAsmName(WalkReg) << "\n";
+          // don't break — continue walking
+        } else {
+          break;
+        }
+      }
+    }
+  }
+
+  errs() << "[declassify]   done.\n";
+}
+
 void PTeXAnalysis::init() {
   // Init pub-in and pub-out maps.
   for (MachineBasicBlock &MBB : MF) {
@@ -329,6 +407,7 @@ void PTeXAnalysis::init() {
       initGOTLoads(MI);
       initMachineMemOperands(MI);
       initAnnotatedPublicAccesses(MI);
+      initDeclassifyAnnotations(MI);
     }
   }
 
@@ -374,6 +453,98 @@ bool PTeXAnalysis::branch() {
 
 void PTeXAnalysis::run() {
   init();
+
+  // Remove declassify annotation calls after init has processed them.
+  // Replace each call with a COPY from input reg → output reg (since
+  // declassify is semantically an identity function) so that the return
+  // value register remains defined for subsequent uses.
+  const auto &TII = *MF.getSubtarget().getInstrInfo();
+  for (MachineBasicBlock &MBB : MF) {
+    for (auto MBBI = MBB.begin(); MBBI != MBB.end(); ) {
+      MachineInstr &MI = *MBBI;
+      ++MBBI;
+
+      if (!MI.isCall()) continue;
+
+      const MachineOperand &CalleeMO = MI.getOperand(0);
+      if (!CalleeMO.isGlobal()) continue;
+      if (!CalleeMO.getGlobal()->getName().starts_with("llvm.protean.declassify"))
+        continue;
+
+      // Find the argument register (implicit use, not RSP/SSP/EFLAGS)
+      // and the return register (implicit def, not RSP/SSP/dead).
+      Register ArgReg, RetReg;
+      for (const MachineOperand &MO : MI.operands()) {
+        if (!MO.isReg() || MO.isRegMask()) continue;
+        Register Reg = MO.getReg();
+        if (!Reg.isValid()) continue;
+        if (Reg == X86::RSP || Reg == X86::ESP ||
+            Reg == X86::SSP || Reg == X86::EFLAGS)
+          continue;
+        if (MO.isUse() && MO.isImplicit())
+          ArgReg = Reg;
+        if (MO.isDef() && MO.isImplicit() && !MO.isDead())
+          RetReg = Reg;
+      }
+
+      errs() << "[declassify] replacing call: "
+             << CalleeMO.getGlobal()->getName();
+
+      if (ArgReg.isValid() && RetReg.isValid() && ArgReg != RetReg) {
+        auto NewCopy = BuildMI(MBB, MBBI, MI.getDebugLoc(),
+                TII.get(TargetOpcode::COPY), RetReg)
+          .addReg(ArgReg);
+        // Mark both operands of the replacement COPY as public so that
+        // the forward() dataflow pass can propagate publicness from the
+        // declassified value through all downstream consumers.
+        for (MachineOperand &MO : NewCopy->operands())
+          if (MO.isReg() && MO.getReg().isValid())
+            markOpPublic(MO);
+
+        // Forward walk: mark load outputs as public when their base/index
+        // address is the declassified register. The forward() dataflow
+        // pass does NOT propagate publicness through loads (by design:
+        // loading from a public address doesn't make the data public).
+        // But Declassiflow tells us the loaded VALUE is public at this
+        // frontier, so we explicitly seed load DEFs here.
+        for (auto FwdIt = MBBI; FwdIt != MBB.end(); ++FwdIt) {
+          MachineInstr &NextMI = *FwdIt;
+          if (!NextMI.mayLoad()) continue;
+          const int MemIdx = X86::getMemRefBeginIdx(NextMI);
+          if (MemIdx < 0) continue;
+          MachineOperand &Base = NextMI.getOperand(MemIdx + X86::AddrBaseReg);
+          MachineOperand &Index = NextMI.getOperand(MemIdx + X86::AddrIndexReg);
+          bool UsesRet = false;
+          if (Base.isReg() && Base.getReg().isValid() &&
+              TRI->regsOverlap(Base.getReg(), RetReg))
+            UsesRet = true;
+          if (Index.isReg() && Index.getReg().isValid() &&
+              TRI->regsOverlap(Index.getReg(), RetReg))
+            UsesRet = true;
+          if (UsesRet) {
+            errs() << "[declassify]   forward: marking load output public: "
+                   << NextMI;
+            for (MachineOperand &MO : NextMI.operands())
+              if (MO.isReg() && MO.isDef() && MO.getReg().isValid())
+                markOpPublic(MO);
+          }
+        }
+
+        errs() << " → COPY " << TRI->getRegAsmName(ArgReg)
+               << " -> " << TRI->getRegAsmName(RetReg) << " (public)\n";
+      } else if (ArgReg.isValid() && ArgReg == RetReg) {
+        // Same register — no COPY needed, but we need to seed publicness.
+        // Walk forward and mark the first use of ArgReg public if possible.
+        errs() << " (same reg, no COPY needed)\n";
+      } else {
+        // Return value is dead — just remove.
+        errs() << " (return dead, just removing)\n";
+      }
+
+      MF.eraseCallSiteInfo(&MI);
+      MI.eraseFromParent();
+    }
+  }
 
   LLVM_DEBUG(dbgs() << "==== init ====\n");
   LLVM_DEBUG(print(dbgs()));

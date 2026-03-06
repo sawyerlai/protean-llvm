@@ -44,6 +44,7 @@ protected:
   void initGOTLoads(MachineInstr &MI);
   void initMachineMemOperands(MachineInstr &MI);
   void initAnnotatedPublicAccesses(MachineInstr &MI);
+  void initDeclassifyAnnotations(MachineInstr &MI);
 
   bool forward();
   bool backward();
