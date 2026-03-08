@@ -308,6 +308,11 @@ void PTeXAnalysis::initAnnotatedPublicAccesses(MachineInstr &MI) {
 }
 
 // Declassiflow knowledge-frontier annotation handler.
+// Recognises calls to @llvm.protean.declassify.* and marks register
+// operands as public. Walks backward to find the defining instruction
+// of each register and marks its DEFs public too — this seeds the
+// existing forward() dataflow pass so publicness propagates through
+// all downstream consumers (arithmetic, copies, dependent loads, etc.).
 void PTeXAnalysis::initDeclassifyAnnotations(MachineInstr &MI) {
   if (!MI.isCall())
     return;
@@ -370,8 +375,9 @@ void PTeXAnalysis::initDeclassifyAnnotations(MachineInstr &MI) {
           WalkReg = DefMI.getOperand(1).getReg();
           errs() << "[declassify]   following copy chain: "
                  << TRI->getRegAsmName(WalkReg) << "\n";
+          // don't break — continue walking
         } else {
-	  break; 
+          break;
         }
       }
     }
