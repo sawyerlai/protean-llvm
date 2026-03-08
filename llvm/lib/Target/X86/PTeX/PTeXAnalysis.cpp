@@ -335,6 +335,8 @@ void PTeXAnalysis::initDeclassifyAnnotations(MachineInstr &MI) {
       continue;
     if (!MO.getReg().isValid())
       continue;
+    if (MO.isDef())
+      continue;
     Register Reg = MO.getReg();
     if (Reg == X86::RSP || Reg == X86::SSP || Reg == X86::EFLAGS)
       continue;
@@ -382,6 +384,7 @@ void PTeXAnalysis::initDeclassifyAnnotations(MachineInstr &MI) {
   }
 
   errs() << "[declassify]   done.\n";
+  DeclassifyCallsToErase.push_back(&MI);
 }
 
 void PTeXAnalysis::init() {
@@ -389,6 +392,24 @@ void PTeXAnalysis::init() {
   for (MachineBasicBlock &MBB : MF) {
     In[&MBB].init(TRI);
     Out[&MBB].init(TRI);
+  }
+
+  // Adding stuff for fully declsasified functions
+  if (MF.getFunction().hasFnAttribute("ptex-fully-declassified")) {
+    errs() << "[declassify] fully declassified: " << MF.getName() << "\n";
+    MachineBasicBlock &EntryMBB = MF.front();
+
+    for (const auto &LI : EntryMBB.liveins())
+      In[&EntryMBB].addReg(LI.PhysReg);
+
+    for (MachineBasicBlock &MBB : MF) {
+      for (MachineInstr &MI : MBB) {
+        if (!MI.mayLoad()) continue;
+        for (MachineOperand &MO : MI.operands())
+          if (MO.isReg() && MO.isDef() && !MO.isImplicit() && MO.getReg().isValid())
+            markOpPublic(MO);
+      }
+    }
   }
 
   // Initialize operand types.
@@ -454,95 +475,68 @@ bool PTeXAnalysis::branch() {
 void PTeXAnalysis::run() {
   init();
 
-  // Remove declassify annotation calls after init has processed them.
-  // Replace each call with a COPY from input reg → output reg (since
-  // declassify is semantically an identity function) so that the return
-  // value register remains defined for subsequent uses.
-  const auto &TII = *MF.getSubtarget().getInstrInfo();
+  const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
+
   for (MachineBasicBlock &MBB : MF) {
+    auto regIsDeadAfter = [&](MCPhysReg Reg, MachineBasicBlock::iterator From) {
+      for (auto It = From; It != MBB.end(); ++It) {
+        for (const MachineOperand &MO : It->operands()) {
+	  if (!MO.isReg() || !TRI->regsOverlap(MO.getReg(), Reg)) continue;
+          if (MO.isUse() && !MO.isUndef()) return false;
+          if (MO.isDef()) return true;
+	}
+      }
+      return true;
+    };
+
     for (auto MBBI = MBB.begin(); MBBI != MBB.end(); ) {
       MachineInstr &MI = *MBBI;
       ++MBBI;
 
       if (!MI.isCall()) continue;
-
       const MachineOperand &CalleeMO = MI.getOperand(0);
       if (!CalleeMO.isGlobal()) continue;
       if (!CalleeMO.getGlobal()->getName().starts_with("llvm.protean.declassify"))
         continue;
 
-      // Find the argument register (implicit use, not RSP/SSP/EFLAGS)
-      // and the return register (implicit def, not RSP/SSP/dead).
-      Register ArgReg, RetReg;
-      for (const MachineOperand &MO : MI.operands()) {
-        if (!MO.isReg() || MO.isRegMask()) continue;
-        Register Reg = MO.getReg();
-        if (!Reg.isValid()) continue;
-        if (Reg == X86::RSP || Reg == X86::ESP ||
-            Reg == X86::SSP || Reg == X86::EFLAGS)
-          continue;
-        if (MO.isUse() && MO.isImplicit())
-          ArgReg = Reg;
-        if (MO.isDef() && MO.isImplicit() && !MO.isDead())
-          RetReg = Reg;
+      errs() << "[declassify] removing: "
+             << CalleeMO.getGlobal()->getName() << "\n";
+
+      // Collect dead setup moves backward from the call.
+      // These are MOV/COPY instructions whose output register
+      // is dead after the call is removed.
+      SmallVector<MachineInstr *> ToErase;
+      auto ScanIt = MI.getIterator();
+      while (ScanIt != MBB.begin()) {
+        --ScanIt;
+        MachineInstr &Prev = *ScanIt;
+
+        // Only remove plain register moves and copies.
+        if (Prev.getOpcode() != X86::MOV64rr &&
+            Prev.getOpcode() != X86::MOV32rr &&
+            !Prev.isCopy())
+          break;
+
+        // Find the defined register.
+        MCPhysReg DefReg = X86::NoRegister;
+        for (const MachineOperand &MO : Prev.operands())
+          if (MO.isReg() && MO.isDef() && !MO.isImplicit())
+            DefReg = MO.getReg();
+        if (DefReg == X86::NoRegister)
+          break;
+
+        // Only erase if the defined register is dead after the call.
+	if (!regIsDeadAfter(DefReg, MBBI)) break;
+
+        errs() << "[declassify] removing dead setup move: " << Prev;
+        ToErase.push_back(&Prev);
       }
 
-      errs() << "[declassify] replacing call: "
-             << CalleeMO.getGlobal()->getName();
-
-      if (ArgReg.isValid() && RetReg.isValid() && ArgReg != RetReg) {
-        auto NewCopy = BuildMI(MBB, MBBI, MI.getDebugLoc(),
-                TII.get(TargetOpcode::COPY), RetReg)
-          .addReg(ArgReg);
-        // Mark both operands of the replacement COPY as public so that
-        // the forward() dataflow pass can propagate publicness from the
-        // declassified value through all downstream consumers.
-        for (MachineOperand &MO : NewCopy->operands())
-          if (MO.isReg() && MO.getReg().isValid())
-            markOpPublic(MO);
-
-        // Forward walk: mark load outputs as public when their base/index
-        // address is the declassified register. The forward() dataflow
-        // pass does NOT propagate publicness through loads (by design:
-        // loading from a public address doesn't make the data public).
-        // But Declassiflow tells us the loaded VALUE is public at this
-        // frontier, so we explicitly seed load DEFs here.
-        for (auto FwdIt = MBBI; FwdIt != MBB.end(); ++FwdIt) {
-          MachineInstr &NextMI = *FwdIt;
-          if (!NextMI.mayLoad()) continue;
-          const int MemIdx = X86::getMemRefBeginIdx(NextMI);
-          if (MemIdx < 0) continue;
-          MachineOperand &Base = NextMI.getOperand(MemIdx + X86::AddrBaseReg);
-          MachineOperand &Index = NextMI.getOperand(MemIdx + X86::AddrIndexReg);
-          bool UsesRet = false;
-          if (Base.isReg() && Base.getReg().isValid() &&
-              TRI->regsOverlap(Base.getReg(), RetReg))
-            UsesRet = true;
-          if (Index.isReg() && Index.getReg().isValid() &&
-              TRI->regsOverlap(Index.getReg(), RetReg))
-            UsesRet = true;
-          if (UsesRet) {
-            errs() << "[declassify]   forward: marking load output public: "
-                   << NextMI;
-            for (MachineOperand &MO : NextMI.operands())
-              if (MO.isReg() && MO.isDef() && MO.getReg().isValid())
-                markOpPublic(MO);
-          }
-        }
-
-        errs() << " → COPY " << TRI->getRegAsmName(ArgReg)
-               << " -> " << TRI->getRegAsmName(RetReg) << " (public)\n";
-      } else if (ArgReg.isValid() && ArgReg == RetReg) {
-        // Same register — no COPY needed, but we need to seed publicness.
-        // Walk forward and mark the first use of ArgReg public if possible.
-        errs() << " (same reg, no COPY needed)\n";
-      } else {
-        // Return value is dead — just remove.
-        errs() << " (return dead, just removing)\n";
-      }
-
+      // Erase call site info first, then the call, then setup moves.
       MF.eraseCallSiteInfo(&MI);
       MI.eraseFromParent();
+      for (MachineInstr *Dead : ToErase)
+        Dead->eraseFromParent();
     }
   }
 

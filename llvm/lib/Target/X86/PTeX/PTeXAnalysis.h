@@ -29,6 +29,7 @@ public:
   void dump() const { print(errs()); }
 
   MachineBasicBlock *splitCriticalEdge(MachineBasicBlock *Src, MachineBasicBlock *Dest);
+  SmallVector<MachineInstr *> DeclassifyCallsToErase;
 
 protected:
   // Initialization functions.
@@ -45,8 +46,8 @@ protected:
   void initMachineMemOperands(MachineInstr &MI);
   void initAnnotatedPublicAccesses(MachineInstr &MI);
   void initDeclassifyAnnotations(MachineInstr &MI);
-
   bool forward();
+
   bool backward();
   bool fixup();
   bool branch();
