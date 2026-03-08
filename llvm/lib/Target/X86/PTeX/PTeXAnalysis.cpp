@@ -5,6 +5,7 @@
 #include "X86.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/CodeGen/LivePhysRegs.h"
+#include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/Function.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
@@ -306,7 +307,7 @@ void PTeXAnalysis::initAnnotatedPublicAccesses(MachineInstr &MI) {
   }
 }
 
-// added for annotation processing
+// Declassiflow knowledge-frontier annotation handler.
 void PTeXAnalysis::initDeclassifyAnnotations(MachineInstr &MI) {
   if (!MI.isCall())
     return;
@@ -316,29 +317,68 @@ void PTeXAnalysis::initDeclassifyAnnotations(MachineInstr &MI) {
     return;
 
   const GlobalValue *GV = CalleeMO.getGlobal();
-  if (!GV->getName().startswith("llvm.protean.declassify"))
+  if (!GV->getName().starts_with("llvm.protean.declassify"))
     return;
 
   errs() << "[declassify] found annotation call: " << GV->getName() << "\n";
   errs() << "[declassify]   instruction: " << MI << "\n";
+
+  MachineBasicBlock *MBB = MI.getParent();
 
   for (MachineOperand &MO : MI.operands()) {
     if (!MO.isReg() || MO.isRegMask())
       continue;
     if (!MO.getReg().isValid())
       continue;
+    if (MO.isDef())
+      continue;
     Register Reg = MO.getReg();
     if (Reg == X86::RSP || Reg == X86::SSP || Reg == X86::EFLAGS)
       continue;
 
-    errs() << "[declassify]   marking public: "
-           << MI.getParent()->getParent()->getSubtarget()
-                .getRegisterInfo()->getRegAsmName(Reg)
-           << "\n";
+    errs() << "[declassify]   marking public at call site: "
+           << TRI->getRegAsmName(Reg) << "\n";
     markOpPublic(MO);
+
+    // Walk backwards from the annotation call to find the instruction
+    // that defines this register and mark its DEF public too.
+    // This seeds the forward dataflow so publicness propagates through
+    // all downstream consumers (arithmetic, copies, dependent loads, etc.).
+    Register WalkReg = Reg;
+    auto It = MI.getIterator();
+    while (It != MBB->begin()) {
+      --It;
+      MachineInstr &DefMI = *It;
+      bool FoundDef = false;
+      for (MachineOperand &DefMO : DefMI.operands()) {
+        if (!DefMO.isReg() || !DefMO.isDef() || DefMO.isImplicit())
+          continue;
+        if (!TRI->regsOverlap(DefMO.getReg(), WalkReg))
+          continue;
+        // Found the defining instruction. Mark its output public.
+        errs() << "[declassify]   marking defining DEF public: "
+               << TRI->getRegAsmName(DefMO.getReg())
+               << " in: " << DefMI;
+        markOpPublic(DefMO);
+        FoundDef = true;
+      }
+      if (FoundDef) {
+        // If DefMI is just a copy, follow the copy source backward
+        // to mark the entire chain public so forward() sees the full
+        // public extent through calling-convention copy chains.
+        if (DefMI.isCopy()) {
+          WalkReg = DefMI.getOperand(1).getReg();
+          errs() << "[declassify]   following copy chain: "
+                 << TRI->getRegAsmName(WalkReg) << "\n";
+        } else {
+	  break; 
+        }
+      }
+    }
   }
 
   errs() << "[declassify]   done.\n";
+  DeclassifyCallsToErase.push_back(&MI);
 }
 
 void PTeXAnalysis::init() {
@@ -346,6 +386,24 @@ void PTeXAnalysis::init() {
   for (MachineBasicBlock &MBB : MF) {
     In[&MBB].init(TRI);
     Out[&MBB].init(TRI);
+  }
+
+  // Adding stuff for fully declsasified functions
+  if (MF.getFunction().hasFnAttribute("ptex-fully-declassified")) {
+    errs() << "[declassify] fully declassified: " << MF.getName() << "\n";
+    MachineBasicBlock &EntryMBB = MF.front();
+
+    for (const auto &LI : EntryMBB.liveins())
+      In[&EntryMBB].addReg(LI.PhysReg);
+
+    for (MachineBasicBlock &MBB : MF) {
+      for (MachineInstr &MI : MBB) {
+        if (!MI.mayLoad()) continue;
+        for (MachineOperand &MO : MI.operands())
+          if (MO.isReg() && MO.isDef() && !MO.isImplicit() && MO.getReg().isValid())
+            markOpPublic(MO);
+      }
+    }
   }
 
   // Initialize operand types.
@@ -364,7 +422,7 @@ void PTeXAnalysis::init() {
       initGOTLoads(MI);
       initMachineMemOperands(MI);
       initAnnotatedPublicAccesses(MI);
-      initDeclassifyAnnotations(MI);	// added for annotation processing
+      initDeclassifyAnnotations(MI);
     }
   }
 
@@ -408,31 +466,74 @@ bool PTeXAnalysis::branch() {
   return Branch.run();
 }
 
-
 void PTeXAnalysis::run() {
   init();
-  
-  // added for annotation processing
+
+  const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
+
   for (MachineBasicBlock &MBB : MF) {
+    auto regIsDeadAfter = [&](MCPhysReg Reg, MachineBasicBlock::iterator From) {
+      for (auto It = From; It != MBB.end(); ++It) {
+        for (const MachineOperand &MO : It->operands()) {
+	  if (!MO.isReg() || !TRI->regsOverlap(MO.getReg(), Reg)) continue;
+          if (MO.isUse() && !MO.isUndef()) return false;
+          if (MO.isDef()) return true;
+	}
+      }
+      return true;
+    };
+
     for (auto MBBI = MBB.begin(); MBBI != MBB.end(); ) {
       MachineInstr &MI = *MBBI;
       ++MBBI;
 
       if (!MI.isCall()) continue;
-
       const MachineOperand &CalleeMO = MI.getOperand(0);
       if (!CalleeMO.isGlobal()) continue;
-      if (!CalleeMO.getGlobal()->getName().startswith("llvm.protean.declassify"))
+      if (!CalleeMO.getGlobal()->getName().starts_with("llvm.protean.declassify"))
         continue;
 
       errs() << "[declassify] removing: "
              << CalleeMO.getGlobal()->getName() << "\n";
 
+      // Collect dead setup moves backward from the call.
+      // These are MOV/COPY instructions whose output register
+      // is dead after the call is removed.
+      SmallVector<MachineInstr *> ToErase;
+      auto ScanIt = MI.getIterator();
+      while (ScanIt != MBB.begin()) {
+        --ScanIt;
+        MachineInstr &Prev = *ScanIt;
+
+        // Only remove plain register moves and copies.
+        if (Prev.getOpcode() != X86::MOV64rr &&
+            Prev.getOpcode() != X86::MOV32rr &&
+            !Prev.isCopy())
+          break;
+
+        // Find the defined register.
+        MCPhysReg DefReg = X86::NoRegister;
+        for (const MachineOperand &MO : Prev.operands())
+          if (MO.isReg() && MO.isDef() && !MO.isImplicit())
+            DefReg = MO.getReg();
+        if (DefReg == X86::NoRegister)
+          break;
+
+        // Only erase if the defined register is dead after the call.
+	if (!regIsDeadAfter(DefReg, MBBI)) break;
+
+        errs() << "[declassify] removing dead setup move: " << Prev;
+        ToErase.push_back(&Prev);
+      }
+
+      // Erase call site info first, then the call, then setup moves.
       MF.eraseCallSiteInfo(&MI);
       MI.eraseFromParent();
+      for (MachineInstr *Dead : ToErase)
+        Dead->eraseFromParent();
     }
-  } 
- 
+  }
+
   LLVM_DEBUG(dbgs() << "==== init ====\n");
   LLVM_DEBUG(print(dbgs()));
 
