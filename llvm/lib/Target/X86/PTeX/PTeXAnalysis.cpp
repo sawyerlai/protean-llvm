@@ -272,6 +272,45 @@ static bool analyzeMemAccess(MachineInstr &MI, Register &Base, Register &Index,
   return true;
 }
 
+static bool isDeclassifyCall(const MachineInstr &MI) {
+  if (!MI.isCall())
+    return false;
+
+  const MachineOperand &CalleeMO = MI.getOperand(0);
+  if (!CalleeMO.isGlobal())
+    return false;
+
+  const GlobalValue *GV = CalleeMO.getGlobal();
+  return GV->getName().starts_with("llvm.protean.declassify");
+}
+
+static bool isDeclassifyReservedReg(Register Reg) {
+  return Reg == X86::RSP || Reg == X86::ESP || Reg == X86::SSP ||
+         Reg == X86::EFLAGS;
+}
+
+static Register getDeclassifyCallArgReg(const MachineInstr &MI) {
+  for (const MachineOperand &MO : MI.operands()) {
+    if (!MO.isReg() || MO.isRegMask() || !MO.getReg().isValid() || !MO.isUse())
+      continue;
+    if (isDeclassifyReservedReg(MO.getReg()))
+      continue;
+    return MO.getReg();
+  }
+  return X86::NoRegister;
+}
+
+static Register getDeclassifyCallRetReg(const MachineInstr &MI) {
+  for (const MachineOperand &MO : MI.operands()) {
+    if (!MO.isReg() || MO.isRegMask() || !MO.getReg().isValid() || !MO.isDef())
+      continue;
+    if (isDeclassifyReservedReg(MO.getReg()))
+      continue;
+    return MO.getReg();
+  }
+  return X86::NoRegister;
+}
+
 void PTeXAnalysis::initAnnotatedPublicAccesses(MachineInstr &MI) {
   Register Base;
   Register Index;
@@ -314,16 +353,10 @@ void PTeXAnalysis::initAnnotatedPublicAccesses(MachineInstr &MI) {
 // existing forward() dataflow pass so publicness propagates through
 // all downstream consumers (arithmetic, copies, dependent loads, etc.).
 void PTeXAnalysis::initDeclassifyAnnotations(MachineInstr &MI) {
-  if (!MI.isCall())
+  if (!isDeclassifyCall(MI))
     return;
 
-  const MachineOperand &CalleeMO = MI.getOperand(0);
-  if (!CalleeMO.isGlobal())
-    return;
-
-  const GlobalValue *GV = CalleeMO.getGlobal();
-  if (!GV->getName().starts_with("llvm.protean.declassify"))
-    return;
+  const GlobalValue *GV = MI.getOperand(0).getGlobal();
 
   errs() << "[declassify] found annotation call: " << GV->getName() << "\n";
   errs() << "[declassify]   instruction: " << MI << "\n";
@@ -476,15 +509,23 @@ void PTeXAnalysis::run() {
   init();
 
   const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
+  bool RemovedDeclassifyCall = false;
 
   for (MachineBasicBlock &MBB : MF) {
     auto regIsDeadAfter = [&](MCPhysReg Reg, MachineBasicBlock::iterator From) {
       for (auto It = From; It != MBB.end(); ++It) {
+        bool HasUse = false;
+        bool HasDef = false;
         for (const MachineOperand &MO : It->operands()) {
-	  if (!MO.isReg() || !TRI->regsOverlap(MO.getReg(), Reg)) continue;
-          if (MO.isUse() && !MO.isUndef()) return false;
-          if (MO.isDef()) return true;
-	}
+          if (!MO.isReg() || !TRI->regsOverlap(MO.getReg(), Reg))
+            continue;
+          HasUse |= MO.isUse() && !MO.isUndef();
+          HasDef |= MO.isDef();
+        }
+        if (HasUse)
+          return false;
+        if (HasDef)
+          return true;
       }
       return true;
     };
@@ -498,6 +539,35 @@ void PTeXAnalysis::run() {
       if (!CalleeMO.isGlobal()) continue;
       if (!CalleeMO.getGlobal()->getName().starts_with("llvm.protean.declassify"))
         continue;
+
+      RemovedDeclassifyCall = true;
+
+      Register ArgReg = getDeclassifyCallArgReg(MI);
+      Register RetReg = getDeclassifyCallRetReg(MI);
+
+      if (ArgReg.isValid() && RetReg.isValid() && ArgReg != RetReg) {
+        errs() << "[declassify]   rewriting uses of "
+               << TRI->getRegAsmName(RetReg) << " to "
+               << TRI->getRegAsmName(ArgReg) << "\n";
+
+        for (auto UseIt = MBBI; UseIt != MBB.end(); ++UseIt) {
+          bool RedefinesRetReg = false;
+          for (MachineOperand &MO : UseIt->operands()) {
+            if (!MO.isReg() || MO.isRegMask() || !MO.getReg().isValid() ||
+                !TRI->regsOverlap(MO.getReg(), RetReg))
+              continue;
+
+            if (MO.isUse() && !MO.isUndef())
+              MO.setReg(ArgReg);
+
+            if (MO.isDef())
+              RedefinesRetReg = true;
+          }
+
+          if (RedefinesRetReg)
+            break;
+        }
+      }
 
       errs() << "[declassify] removing: "
              << CalleeMO.getGlobal()->getName() << "\n";
@@ -537,6 +607,160 @@ void PTeXAnalysis::run() {
       MI.eraseFromParent();
       for (MachineInstr *Dead : ToErase)
         Dead->eraseFromParent();
+    }
+  }
+
+  if (RemovedDeclassifyCall) {
+    auto regIsDeadAfter = [&](MachineBasicBlock &MBB, MCPhysReg Reg,
+                              MachineBasicBlock::iterator From) {
+      for (auto It = From; It != MBB.end(); ++It) {
+        bool HasUse = false;
+        bool HasDef = false;
+        for (const MachineOperand &MO : It->operands()) {
+          if (!MO.isReg() || !TRI->regsOverlap(MO.getReg(), Reg))
+            continue;
+          HasUse |= MO.isUse() && !MO.isUndef();
+          HasDef |= MO.isDef();
+        }
+        if (HasUse)
+          return false;
+        if (HasDef)
+          return true;
+      }
+      return true;
+    };
+
+    // Remove dead register shuffles left over from declassify call lowering.
+    for (MachineBasicBlock &MBB : MF) {
+      bool LocalChanged;
+      do {
+        LocalChanged = false;
+        for (auto It = MBB.begin(); It != MBB.end();) {
+          MachineInstr &MI = *It;
+          auto NextIt = std::next(It);
+
+          const bool IsSetupInstr = MI.isCopy() ||
+                                    MI.getOpcode() == X86::MOV64rr ||
+                                    MI.getOpcode() == X86::MOV32rr ||
+                                    MI.getOpcode() == X86::LEA64r;
+          if (!IsSetupInstr) {
+            It = NextIt;
+            continue;
+          }
+
+          bool AllDefsDead = true;
+          bool HasDef = false;
+          for (const MachineOperand &MO : MI.operands()) {
+            if (!MO.isReg() || !MO.isDef() || MO.isImplicit())
+              continue;
+            HasDef = true;
+            if (!regIsDeadAfter(MBB, MO.getReg(), NextIt)) {
+              AllDefsDead = false;
+              break;
+            }
+          }
+
+          if (!HasDef || !AllDefsDead) {
+            It = NextIt;
+            continue;
+          }
+
+          errs() << "[declassify] removing dead setup instruction: " << MI;
+          MI.eraseFromParent();
+          LocalChanged = true;
+          It = NextIt;
+        }
+      } while (LocalChanged);
+    }
+
+    const bool HasRemainingCalls = llvm::any_of(MF, [&](MachineBasicBlock &MBB) {
+      return llvm::any_of(MBB, [&](MachineInstr &MI) {
+        return MI.isCall() && !isDeclassifyCall(MI);
+      });
+    });
+
+    if (!HasRemainingCalls) {
+      MachineFrameInfo &MFI = MF.getFrameInfo();
+      MFI.setHasCalls(false);
+      MFI.setAdjustsStack(false);
+      MFI.setStackSize(0);
+    }
+
+    const bool HasOtherStackUse = llvm::any_of(MF, [&](MachineBasicBlock &MBB) {
+      return llvm::any_of(MBB, [&](MachineInstr &MI) {
+        if (MI.getOpcode() == X86::PUSH64r || MI.getOpcode() == X86::POP64r ||
+            MI.getOpcode() == X86::CFI_INSTRUCTION || MI.isReturn())
+          return false;
+
+        return llvm::any_of(MI.operands(), [&](const MachineOperand &MO) {
+          if (!MO.isReg())
+            return false;
+          Register Reg = MO.getReg();
+          return Reg == X86::RSP || Reg == X86::ESP;
+        });
+      });
+    });
+
+    // Declassify calls can turn a leaf function into a framed function solely
+    // because call lowering inserted a scratch push/pop pair. If the function
+    // is leaf again after removing those calls, strip that synthetic frame too.
+    if (!HasRemainingCalls && !HasOtherStackUse) {
+      SmallSet<MCPhysReg, 8> CalleeSavedRegs;
+      for (const MCPhysReg *CSRIt = TRI->getCalleeSavedRegs(&MF); *CSRIt;
+           ++CSRIt)
+        CalleeSavedRegs.insert(*CSRIt);
+
+      MachineBasicBlock &EntryMBB = MF.front();
+      for (auto It = EntryMBB.begin(); It != EntryMBB.end();) {
+        MachineInstr &MI = *It;
+        auto NextIt = std::next(It);
+        if (MI.getOpcode() == X86::PUSH64r && MI.getOperand(0).isReg() &&
+            !CalleeSavedRegs.contains(MI.getOperand(0).getReg())) {
+          errs() << "[declassify] removing synthetic frame setup: " << MI;
+          MI.eraseFromParent();
+          while (NextIt != EntryMBB.end() &&
+                 NextIt->getOpcode() == X86::CFI_INSTRUCTION) {
+            auto EraseIt = NextIt++;
+            EntryMBB.erase(EraseIt);
+          }
+          break;
+        }
+        It = NextIt;
+      }
+
+      for (MachineBasicBlock &MBB : MF) {
+        for (auto It = MBB.begin(); It != MBB.end();) {
+          MachineInstr &MI = *It;
+          auto NextIt = std::next(It);
+          if (MI.getOpcode() == X86::POP64r) {
+            bool DeadPop = true;
+            bool PopsCallerSaved = false;
+            for (const MachineOperand &MO : MI.operands()) {
+              if (!MO.isReg() || !MO.isDef() || MO.isImplicit())
+                continue;
+              PopsCallerSaved = !CalleeSavedRegs.contains(MO.getReg());
+              if (!regIsDeadAfter(MBB, MO.getReg(), NextIt)) {
+                DeadPop = false;
+                break;
+              }
+            }
+            if (!DeadPop || !PopsCallerSaved) {
+              It = NextIt;
+              continue;
+            }
+
+            errs() << "[declassify] removing synthetic frame destroy: " << MI;
+            MI.eraseFromParent();
+            while (NextIt != MBB.end() &&
+                   NextIt->getOpcode() == X86::CFI_INSTRUCTION) {
+              auto EraseIt = NextIt++;
+              MBB.erase(EraseIt);
+            }
+            continue;
+          }
+          It = NextIt;
+        }
+      }
     }
   }
 
