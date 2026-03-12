@@ -1,0 +1,16 @@
+boringssl commit: fbf01ffae10929d863b6744bb505f0cae6c9c712
+libsodium commit: 148d2d60dd4c8de780e794a27260f29295ad98a4
+ctaes commit: 3b10b89b05ca1ef5fff33316777249df25c8b930
+bearssl commit: 3d9be2f60b7764e46836514bcd6e453abdfa864a
+djbsort release: 20180717 (djbsort-20180717)
+
+1) CRYPTO_memcmp       -> dataset/targets/boringssl/mem.cc:325
+2) sodium_memcmp       -> dataset/targets/libsodium/utils.c:187
+3) sodium_compare      -> dataset/targets/libsodium/utils.c:227
+4) sodium_is_zero      -> dataset/targets/libsodium/utils.c:258
+5) LoadBytes           -> dataset/targets/ctaes/ctaes.c:36
+6) SubBytes            -> dataset/targets/ctaes/ctaes.c:66
+7) ShiftRows           -> dataset/targets/ctaes/ctaes.c:265
+8) SaveBytes           -> dataset/targets/ctaes/ctaes.c:47
+9) int32_sort          -> dataset/targets/djbsort/int32_sort_portable1.c:46
+10) br_chacha20_ct_run -> dataset/targets/bearssl/chacha20_ct.c:29

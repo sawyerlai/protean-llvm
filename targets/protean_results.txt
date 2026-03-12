@@ -1,0 +1,63 @@
+=== Protean + Declassiflow Results (Current Progress) ===
+Date: 2026-03-09
+Compiler: /protean/llvm/build/bin/llc (Protean LLVM 17.0.6)
+Reference branch: sawyer-declassify
+Mode: CT (constant-time)
+Annotation style: matched to annotated_protean_ex.ll
+
+--- Summary: Saved sawyer-declassify artifacts vs current rerun ---
+Function     | sawyer ann PROT | sawyer ann sanit | current ann PROT | current ann sanit | Verdict
+-------------|------------------|------------------|------------------|-------------------|---------
+br_dec32le   |        0         |        1         |        0         |         1         | equal
+br_enc32le   |        0         |        2         |        0         |         1         | better
+int32_minmax |        0         |        2         |        0         |         1         | better
+
+--- Baseline check ---
+Function     | current baseline behavior
+-------------|---------------------------
+br_dec32le   | protected load remains (`ss mov (%rdi), %eax`)
+br_enc32le   | no PROT expected; plain store remains
+int32_minmax | protected arithmetic/load chain remains
+foo          | two protected loads remain in both base and annotated forms
+
+--- Current annotated outputs ---
+br_dec32le:
+  push %rax
+  mov %rdi,%rdi
+  ss mov (%rdi),%eax
+  pop %rcx
+  ret
+
+br_enc32le:
+  push %rax
+  mov %rdi,%rdi
+  mov %esi,(%rdi)
+  pop %rax
+  ret
+
+int32_minmax:
+  push %rax
+  mov %rsi,%rsi
+  ss mov %edi,%ecx
+  ss mov (%rsi),%eax
+  ...
+  ss mov %ecx,%eax
+  pop %rcx
+  ret
+
+foo annotated:
+  push %rax
+  mov %rdi,%rdi
+  ss mov (%rdi),%ecx
+  test %ecx,%ecx
+  mov %rcx,%rcx
+  ss mov 0x0(,%rcx,4),%eax
+  pop %rcx
+  ret
+
+--- Assessment ---
+Current progress is better than the saved sawyer-declassify target artifacts for the active targets:
+- PROT count is still reduced to zero on the annotated target cases.
+- Sanitization move count improved on br_enc32le and int32_minmax.
+- br_dec32le is unchanged, not worse.
+- The remaining regression is the synthetic push/pop frame around annotated functions.
