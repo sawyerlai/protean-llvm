@@ -307,12 +307,9 @@ void PTeXAnalysis::initAnnotatedPublicAccesses(MachineInstr &MI) {
   }
 }
 
-// Declassiflow knowledge-frontier annotation handler.
-// Recognises calls to @llvm.protean.declassify.* and marks register
-// operands as public. Walks backward to find the defining instruction
-// of each register and marks its DEFs public too — this seeds the
-// existing forward() dataflow pass so publicness propagates through
-// all downstream consumers (arithmetic, copies, dependent loads, etc.).
+// Declassiflow knowledge-frontier annotation handler:
+// Recognises calls to @llvm.protean.declassify.* and marks register operands as public. Walks backward to find the defining instruction
+// of each register and marks its DEFs public too, to seed the existing forward() dataflow pass so publicness propagates through all downstream consumers.
 void PTeXAnalysis::initDeclassifyAnnotations(MachineInstr &MI) {
   if (!MI.isCall())
     return;
@@ -346,9 +343,7 @@ void PTeXAnalysis::initDeclassifyAnnotations(MachineInstr &MI) {
     markOpPublic(MO);
 
     // Walk backwards from the annotation call to find the instruction
-    // that defines this register and mark its DEF public too.
-    // This seeds the forward dataflow so publicness propagates through
-    // all downstream consumers (arithmetic, copies, dependent loads, etc.).
+    // that defines this register and mark its DEF public in order to seed foward dataflow.
     Register WalkReg = Reg;
     auto It = MI.getIterator();
     while (It != MBB->begin()) {
@@ -368,9 +363,7 @@ void PTeXAnalysis::initDeclassifyAnnotations(MachineInstr &MI) {
         FoundDef = true;
       }
       if (FoundDef) {
-        // If DefMI is just a copy, follow the copy source backward
-        // to mark the entire chain public so forward() sees the full
-        // public extent through calling-convention copy chains.
+        // If DefMI is a copy instruction, follow the copy source backward to mark the entire chain public
         if (DefMI.isCopy()) {
           WalkReg = DefMI.getOperand(1).getReg();
           errs() << "[declassify]   following copy chain: "
@@ -503,21 +496,17 @@ void PTeXAnalysis::run() {
              << CalleeMO.getGlobal()->getName() << "\n";
 
       // Collect dead setup moves backward from the call.
-      // These are MOV/COPY instructions whose output register
-      // is dead after the call is removed.
       SmallVector<MachineInstr *> ToErase;
       auto ScanIt = MI.getIterator();
       while (ScanIt != MBB.begin()) {
         --ScanIt;
         MachineInstr &Prev = *ScanIt;
 
-        // Only remove plain register moves and copies.
         if (Prev.getOpcode() != X86::MOV64rr &&
             Prev.getOpcode() != X86::MOV32rr &&
             !Prev.isCopy())
           break;
 
-        // Find the defined register.
         MCPhysReg DefReg = X86::NoRegister;
         for (const MachineOperand &MO : Prev.operands())
           if (MO.isReg() && MO.isDef() && !MO.isImplicit())
@@ -525,7 +514,6 @@ void PTeXAnalysis::run() {
         if (DefReg == X86::NoRegister)
           break;
 
-        // Only erase if the defined register is dead after the call.
 	if (!regIsDeadAfter(DefReg, MBBI)) break;
 
         errs() << "[declassify] removing dead setup move: " << Prev;
