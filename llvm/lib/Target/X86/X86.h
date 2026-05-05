@@ -170,6 +170,9 @@ FunctionPass *createX86ArgumentStackSlotPass();
 
 FunctionPass *createX86PTeXPass(bool Instrument);
 FunctionPass *createX86AnnotatePointersPass();
+// Sawz edit: Protean public-register annotation pipeline passes.
+FunctionPass *createX86PublicAnnotationsPass();
+FunctionPass *createX86ErasePTeXPseudosPass();
 
 // PTEX-TODO: Remove.
 FunctionPass *createX86ProtectPass();
@@ -210,6 +213,9 @@ void initializeX86SpeculativeLoadHardeningPassPass(PassRegistry &);
 void initializeX86TileConfigPass(PassRegistry &);
 void initializeX86PTeXPass(PassRegistry &);
 void initializeX86AnnotatePointersPass(PassRegistry &);
+// Sawz edit: initializers for Protean annotation pipeline passes.
+void initializeX86PublicAnnotationsPass(PassRegistry &);
+void initializeX86ErasePTeXPseudosPass(PassRegistry &);
 // PTEX-TODO: Remove.
 void initializeX86ReturnHardeningPass(PassRegistry &);
 

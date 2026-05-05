@@ -17,6 +17,8 @@
 #include "X86CallLowering.h"
 #include "X86LegalizerInfo.h"
 #include "X86MachineFunctionInfo.h"
+// Sawz edit: include ProteanMachineFunctionInfo so createMachineFunctionInfo can return it.
+#include "PTeX/ProteanMachineFunctionInfo.h"
 #include "X86MacroFusion.h"
 #include "X86Subtarget.h"
 #include "X86TargetObjectFile.h"
@@ -106,7 +108,10 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeX86Target() {
   initializeX86DAGToDAGISelPass(PR);
   initializeX86ArgumentStackSlotPassPass(PR);
   initializeX86PTeXPass(PR);
-  initializeX86AnnotatePointersPass(PR);  
+  initializeX86AnnotatePointersPass(PR);
+  // Sawz edit: register Protean annotation pipeline passes.
+  initializeX86PublicAnnotationsPass(PR);
+  initializeX86ErasePTeXPseudosPass(PR);
 }
 
 static std::unique_ptr<TargetLoweringObjectFile> createTLOF(const Triple &TT) {
@@ -433,8 +438,12 @@ TargetPassConfig *X86TargetMachine::createPassConfig(PassManagerBase &PM) {
 MachineFunctionInfo *X86TargetMachine::createMachineFunctionInfo(
     BumpPtrAllocator &Allocator, const Function &F,
     const TargetSubtargetInfo *STI) const {
-  return X86MachineFunctionInfo::create<X86MachineFunctionInfo>(Allocator, F,
-                                                                STI);
+  // Sawz edit: return ProteanMachineFunctionInfo (subclass of X86MachineFunctionInfo)
+  // so the Protean public-register annotation pipeline can store annotated vregs.
+  // MF.getInfo<X86MachineFunctionInfo>() still works via the upcast.
+  // return X86MachineFunctionInfo::create<X86MachineFunctionInfo>(Allocator, F, STI);
+  return ProteanMachineFunctionInfo::create<ProteanMachineFunctionInfo>(Allocator, F,
+                                                                        STI);
 }
 
 void X86PassConfig::addIRPasses() {
@@ -534,6 +543,11 @@ void X86PassConfig::addPreRegAlloc() {
   addPass(createX86FlagsCopyLoweringPass());
   addPass(createX86DynAllocaExpander());
 
+  // Sawz edit: insert PublicAnnotationsPass before the experimental PTeX pre-RA pass.
+  // Reads the ProteanMachineFunctionInfo side table (populated during ISel) and
+  // inserts PUBLIC_SEED pseudos so PTeXAnalysis Stage 1 can seed physreg publicness.
+  addPass(createX86PublicAnnotationsPass());
+
   // PTEX-EXPERIMENTAL: LLT printing.
   addPass(createX86PTeXPass(/*Instrument*/false));
   addPass(createX86AnnotatePointersPass());
@@ -601,6 +615,9 @@ void X86PassConfig::addPreEmitPass() {
   // late-inserted instructions.
   // PTEX-TODO: Can re-enable instrumentation or assert no instrumentation required to find LLVM bugs.
   addPass(createX86PTeXPass(/*Instrument*/false));
+
+  // Sawz edit: erase all PUBLIC_SEED pseudos after Stage 2 analysis has read them.
+  addPass(createX86ErasePTeXPseudosPass());
 }
 
 void X86PassConfig::addPreEmitPass2() {

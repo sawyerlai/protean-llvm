@@ -5954,6 +5954,20 @@ void SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I,
     // By default, turn this into a target intrinsic node.
     visitTargetIntrinsic(I, Intrinsic);
     return;
+
+  // Sawz edit: Protean public-register annotation. The IR pass inserts this
+  // intrinsic to mark a vreg as holding a public value. We capture the IR
+  // Value -> pre-allocated vreg mapping here (FuncInfo.ValueMap), which is the
+  // only point in the pipeline where that mapping exists, and record it in the
+  // MachineFunctionInfo side table via the virtual addPublicAnnotation hook.
+  // No SDNode is emitted; the intrinsic is silently consumed.
+  case Intrinsic::protean_markpublic: {
+    Value *V = I.getArgOperand(0);
+    auto VMI = FuncInfo.ValueMap.find(V);
+    if (VMI != FuncInfo.ValueMap.end())
+      FuncInfo.MF->getInfo<MachineFunctionInfo>()->addPublicAnnotation(VMI->second);
+    return;
+  }
   case Intrinsic::vscale: {
     EVT VT = TLI.getValueType(DAG.getDataLayout(), I.getType());
     setValue(&I, DAG.getVScale(sdl, VT, APInt(VT.getSizeInBits(), 1)));

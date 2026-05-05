@@ -1698,6 +1698,10 @@ def int_donothing : DefaultAttrsIntrinsic<[], [], [IntrNoMem, IntrWillReturn]>;
 // which specify that infinite loops must be preserved.
 def int_sideeffect : DefaultAttrsIntrinsic<[], [], [IntrInaccessibleMemOnly, IntrWillReturn]>;
 
+// Sawz edit: Protean/ProtCC public-register annotation intrinsic.
+// Consumed entirely during instruction selection (SelectionDAGBuilder); emits no code.
+def int_protean_markpublic : DefaultAttrsIntrinsic<[], [llvm_anyint_ty], [IntrNoMem, IntrWillReturn]>;
+
 // The pseudoprobe intrinsic works as a place holder to the block it probes.
 // Like the sideeffect intrinsic defined above, this intrinsic is treated by the
 // optimizer as having opaque side effects so that it won't be get rid of or moved

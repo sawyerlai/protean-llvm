@@ -98,6 +98,11 @@ template <> struct ilist_callback_traits<MachineBasicBlock> {
 struct MachineFunctionInfo {
   virtual ~MachineFunctionInfo();
 
+  // Sawz edit: Hook for the Protean public-register annotation pipeline.
+  // SelectionDAGBuilder calls this when it encounters @llvm.protean.markpublic.
+  // Default is a no-op; ProteanMachineFunctionInfo overrides it to record the vreg.
+  virtual void addPublicAnnotation(Register) {}
+
   /// Factory function: default behavior is to call new using the
   /// supplied allocator.
   ///

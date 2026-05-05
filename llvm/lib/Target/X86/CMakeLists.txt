@@ -107,6 +107,9 @@ set(sources
   PTeX/PTeXInfo.cpp
   PTeX/Reload.cpp
   PTeX/Rotate.cpp
+  # Sawz edit: new passes for the Protean public-register annotation pipeline.
+  PTeX/PublicAnnotationsPass.cpp
+  PTeX/ErasePTeXPseudosPass.cpp
   X86AnnotatePublic.cpp
   X86LLSCTUtil.cpp # PTEX-TODO: Consolidate.
   )

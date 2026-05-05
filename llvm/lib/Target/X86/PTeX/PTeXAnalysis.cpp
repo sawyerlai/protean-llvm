@@ -221,6 +221,9 @@ void PTeXAnalysis::initPointerReturnValue(MachineInstr &MI) {
 // TODO: Remove?
 void PTeXAnalysis::initPublicInstr(MachineInstr &MI) {
   if (MI.getFlag(MachineInstr::TPEPubM))
+    // Sawz edit: TPEPubM is only set on PUBLIC_SEED, which carries the target
+    // physreg as an implicit use (not a def). Mark all reg operands so the
+    // implicit use is included. A def-only guard would miss it entirely.
     for (MachineOperand &MO : MI.operands())
       if (MO.isReg() && !MO.isUndef())
         markOpPublic(MO);
