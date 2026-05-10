@@ -54,19 +54,22 @@ bool X86PublicAnnotations::runOnMachineFunction(MachineFunction &MF) {
   for (Register VReg : PMFI->getPublicVRegs()) {
     MachineInstr *DefMI = MRI.getVRegDef(VReg);
 
-    // Sawz edit: determine insertion point.
-    // If the vreg is defined inside an MBB, insert the pseudo immediately after
-    // the def. Otherwise (live-in from a predecessor), insert at MBB entry.
-    MachineBasicBlock *MBB;
-    MachineBasicBlock::iterator InsertPoint;
-    if (DefMI) {
-      MBB = DefMI->getParent();
-      InsertPoint = std::next(DefMI->getIterator());
-    } else {
-      // vreg has no single def visible here (e.g., live-in to the function).
-      // Fall back to the entry block.
-      MBB = &MF.front();
-      InsertPoint = MBB->begin();
+    // Sawz edit: skip vregs with no definition — these arise when the annotated
+    // IR value was DCE'd by the selector (e.g. poison from an out-of-range shift)
+    // or when the selector recorded an invalid vreg in the side-table. Inserting
+    // a use of an undefined vreg crashes LiveVariables::HandleVirtRegUse.
+    if (!DefMI)
+      continue;
+
+    MachineBasicBlock *MBB = DefMI->getParent();
+    MachineBasicBlock::iterator InsertPoint = std::next(DefMI->getIterator());
+
+    // Sawz edit: LLVM requires all PHI instructions to precede all non-PHI
+    // instructions in a block. If the def is a PHI, advance past any trailing
+    // PHIs so PUBLIC_SEED lands after the entire PHI group, not inside it.
+    if (DefMI->isPHI()) {
+      while (InsertPoint != MBB->end() && InsertPoint->isPHI())
+        ++InsertPoint;
     }
 
     // Sawz edit: build the PUBLIC_SEED pseudo with VReg as an implicit use.

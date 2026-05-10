@@ -1700,7 +1700,9 @@ def int_sideeffect : DefaultAttrsIntrinsic<[], [], [IntrInaccessibleMemOnly, Int
 
 // Sawz edit: Protean/ProtCC public-register annotation intrinsic.
 // Consumed entirely during instruction selection (SelectionDAGBuilder); emits no code.
-def int_protean_markpublic : DefaultAttrsIntrinsic<[], [llvm_anyint_ty], [IntrNoMem, IntrWillReturn]>;
+// Sawz edit: changed from llvm_anyint_ty to llvm_any_ty so pointer arguments
+// can be passed directly without a ptrtoint cast.
+def int_protean_markpublic : DefaultAttrsIntrinsic<[], [llvm_any_ty], [IntrNoMem, IntrWillReturn]>;
 
 // The pseudoprobe intrinsic works as a place holder to the block it probes.
 // Like the sideeffect intrinsic defined above, this intrinsic is treated by the
