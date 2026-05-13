@@ -1,0 +1,27 @@
+- loop_sum:
+    - phase_name: transmit
+      pass_count: 1
+      type: edge-level
+      state:
+        ["f::call", "f::7"]: []
+        ["f::call", "f::11"]: []
+        ["NULL", "f::call"]: []
+        ["f::7", "f::11"]: ["%9"]
+        ["f::11", "NULL"]: []
+    - phase_name: reduced
+      pass_count: 2
+      type: block-level
+      state:
+        "f::11": []
+        "f::7": ["%9"]
+        "f::call": []
+    - phase_name: knowledge_frontier
+      pass_count: 5
+      state:
+        "%n": ["loop_sum::call"]
+    - phase_name: summary
+      transmitted_vals: ["%9"]
+      leaked_arg_idxs: []
+      fully_declassified: false
+      pure_transmitter: false
+      degenerate_case: true
