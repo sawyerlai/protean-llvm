@@ -12,7 +12,8 @@ if [ ! -f "$TOOL" ]; then
 fi
 
 if [ ! -f "$TARGET" ]; then
-    echo "FAIL: test target not found at $TARGET (run Task 2 first)"
+    echo "FAIL: test target not found at $TARGET"
+    echo "  Build it with: /path/to/build/bin/clang -mllvm --x86-ptex=sbox -O1 -o $TARGET pintool/test/test_target.c"
     exit 1
 fi
 

@@ -42,3 +42,16 @@ Requires [Intel PIN 3.x](https://www.intel.com/content/www/us/en/developer/artic
   PROT-prefixed instruction (`X86MCCodeEmitter.cpp:1291`).
 - Use `--x86-ptex=sbox` to guarantee non-zero counts for any binary (sandbox
   mode prefixes every eligible instruction).
+
+## Testing
+
+Compile the smoke-test target with ProtCC (replace `/path/to/build` with your build directory):
+
+    /path/to/build/bin/clang -mllvm --x86-ptex=sbox -O1 \
+        -o pintool/test/test_target pintool/test/test_target.c
+
+Then run the smoke test:
+
+    PIN_ROOT=/path/to/pin pintool/test/run_test.sh
+
+Expected: `PASS: total=<N>` with `secret_work` in the per-function output.
