@@ -8,11 +8,16 @@
 
 using namespace std;
 
+// Per-function PROT execution counts, keyed by function name.
 static map<string, UINT64> FuncCounts;
 static PIN_LOCK FuncCountLock;
 static UINT64 TotalCount = 0;
+
+// Interned function name strings. Pointers into this set are passed to
+// BBL_InsertCall and must outlive the program run — this set ensures that.
 static set<string> InternedNames;
 
+// Sawz edit
 // Returns the number of PROT-prefixed instructions in bbl.
 // PROT is always emitted as a leading 0x36 byte (X86MCCodeEmitter.cpp:1291).
 static UINT64 CountProtInBBL(BBL bbl) {
@@ -38,6 +43,7 @@ VOID CountProt(const string *FuncName, UINT64 N) {
     PIN_ReleaseLock(&FuncCountLock);
 }
 
+// Sawz edit
 VOID ImageLoad(IMG img, VOID *v) {
     // Only instrument the main executable; skip libc, libm, and other DSOs.
     if (!IMG_IsMainExecutable(img))
@@ -82,6 +88,7 @@ int main(int argc, char *argv[]) {
     if (PIN_Init(argc, argv))
         return 1;
     PIN_InitLock(&FuncCountLock);
+    // Sawz edit
     IMG_AddInstrumentFunction(ImageLoad, 0);
     PIN_AddFiniFunction(Fini, 0);
     PIN_StartProgram();
