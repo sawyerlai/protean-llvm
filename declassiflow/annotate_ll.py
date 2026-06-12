@@ -44,7 +44,7 @@ def infer_type(def_line):
     Returns a type string (e.g. 'i32', 'ptr') or None on failure.
     """
     stripped = def_line.strip()
-    # Must look like  %name = opcode ...
+    # %name = opcode...
     m = re.match(r'%[\w.]+\s*=\s*(\S+)\s*(.*)', stripped, re.DOTALL)
     if not m:
         return None
@@ -264,7 +264,7 @@ def annotate(ll_src, annotations):
         arg_types = arg_types_from_define(line)
 
         # ── Handle ::call annotations (function arguments) ────────────────
-        # Sawz edit: if the first body line is an explicit block label (e.g. "entry:"),
+        # if the first body line is an explicit block label (e.g. "entry:"),
         # insert after it so the call lands inside that block, not before it.
         call_insert_i = define_line_i
         peek = define_line_i + 1
@@ -273,7 +273,7 @@ def annotate(ll_src, annotations):
         if peek < len(lines) and re.match(r'^(\w+):\s*(?:;.*)?$', lines[peek]):
             call_insert_i = peek
 
-        # Sawz edit: collect ::call regs not in the signature so the body-walker
+        # collect ::call regs not in the signature so the body-walker
         # can find and annotate them (e.g. GEPs derived from public args).
         call_body_regs = []
         for reg in func_annots.get('call', []):
@@ -292,7 +292,7 @@ def annotate(ll_src, annotations):
             for lbl, regs in func_annots.items()
             if lbl != 'call'
         }
-        # Sawz edit: non-arg ::call regs are defined in the body — let the
+        # non-arg ::call regs are defined in the body — let the
         # walker find their def and annotate them there.
         if call_body_regs:
             remaining['call'] = set(call_body_regs)

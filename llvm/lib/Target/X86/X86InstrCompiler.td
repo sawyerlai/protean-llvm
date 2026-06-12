@@ -2206,13 +2206,7 @@ let Predicates = [HasMOVBE] in {
  def : Pat<(bswap GR16:$src), (ROL16ri GR16:$src, (i8 8))>;
 }
 
-// Sawz edit: Protean/ProtCC PUBLIC_SEED pseudo-instruction.
-// Inserted by PublicAnnotationsPass (addPreRegAlloc) to carry publicness
-// information through register allocation. The implicit-use GR64 operand
-// is the vreg annotated as public; regalloc rewrites it to the physreg
-// automatically. The TPEPubM MIFlag is set on the pseudo so that
-// PTeXAnalysis::initPublicInstr picks it up in Stage 1 (addPostRegAlloc).
-// Erased by ErasePTeXPseudosPass before code emission.
+// Protean/ProtCC PUBLIC_SEED pseudo-instruction.
 let isPseudo = 1, isMeta = 1, hasSideEffects = 0,
     mayLoad = 0, mayStore = 0, hasNoSchedulingInfo = 1 in
 def PUBLIC_SEED : I<0, Pseudo, (outs), (ins),

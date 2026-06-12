@@ -101,7 +101,7 @@ def gen_conditional(fname):
     acc = "%result"
     for i, op in enumerate(ops):
         nxt = f"%extra{i}"
-        # Sawz edit: cap shift constants to 63 — larger values produce poison on i64
+        # cap shift constants to 63 — larger values produce poison on i64
         rhs = random.choice(["%cond", str(random.randint(1, 63))])
         lines.append(f"  {nxt} = {binop(op, acc, rhs)}")
         acc = nxt
@@ -136,7 +136,7 @@ def gen_loop(fname):
     for j in range(extra_body_ops):
         op  = random.choice(BINOPS)
         nxt = f"%body{j}"
-        # Sawz edit: cap shift constants to 63
+        # cap shift constants to 63
         rhs = random.choice(["%val", "%i", str(random.randint(1, 63))])
         lines.append(f"  {nxt} = {binop(op, acc, rhs)}")
         acc = nxt

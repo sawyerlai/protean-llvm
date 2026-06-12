@@ -29,7 +29,7 @@ DECLARES = {
 # Patterns
 RE_DEFINE     = re.compile(r'^define\s+')
 RE_TERMINATOR = re.compile(r'^\s+(ret|br|switch|indirectbr|invoke|resume|unreachable)\b')
-# Sawz edit: matches ANY phi instruction regardless of type (ptr, float, i1, etc.)
+# matches ANY phi instruction regardless of type (ptr, float, i1, etc.)
 # Used to suppress flushing of buffered int-phi annotations when a non-int phi
 # (e.g. "phi ptr") appears mid-group — without this, markpublic calls land
 # between phi instructions and fail the IR verifier.
@@ -39,7 +39,7 @@ RE_ANY_PHI    = re.compile(r'^\s+%\w+\s*=\s*phi\b')
 #   i1-returning:    icmp, fcmp
 #   conversion ops:  trunc/sext/zext/bitcast — result type is after "to", not before,
 #                    so the generic type-position regex picks the wrong type
-# Sawz edit: skip ops that never produce an annotatable integer result.
+# skip ops that never produce an annotatable integer result.
 # Conversion ops (trunc/sext/zext/bitcast/fptoui/fptosi) are NOT listed here —
 # they're handled by RE_INT_CONV below, which reads the result type from "to TYPE".
 RE_SKIP_OPS   = re.compile(
@@ -47,7 +47,7 @@ RE_SKIP_OPS   = re.compile(
     r'|fptrunc|fpext|uitofp|sitofp)\b'
 )
 
-# Sawz edit: matches integer-producing "to TYPE" conversion instructions.
+# matches integer-producing "to TYPE" conversion instructions.
 # Result type is the token after "to", not the first type in the instruction.
 RE_INT_CONV = re.compile(
     r'^\s+(%\w+)\s*=\s*(?:trunc|sext|zext|bitcast|fptoui|fptosi)\b.*\bto\s+(i64|i32|i16|i8)\b'
@@ -87,7 +87,6 @@ def inject(src, frac=0.3, seed=None):
                 is_phi = (m, ty)
                 break
 
-        # Sawz edit: flush only when the line is not ANY phi (not just int-typed phi).
         # Without RE_ANY_PHI, a "phi ptr" line would trigger a flush and inject
         # markpublic calls between phi instructions, failing the IR verifier.
         if pending_phi_annots and not RE_ANY_PHI.match(line) and line.strip():
@@ -109,7 +108,7 @@ def inject(src, frac=0.3, seed=None):
         if RE_TERMINATOR.match(line):
             continue
 
-        # Sawz edit: handle conversion ops (trunc/sext/zext/bitcast/fptoui/fptosi)
+        # handle conversion ops (trunc/sext/zext/bitcast/fptoui/fptosi)
         # whose result type is after "to", not the first type token.
         m_conv = RE_INT_CONV.match(line)
         if m_conv:

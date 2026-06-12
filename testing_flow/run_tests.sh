@@ -35,7 +35,7 @@ N_TESTS=${1:-100}
 FRAC=${2:-0.3}
 PTEX_MODE=${3:-cts}
 DEBUG=${DEBUG:-0}   # set DEBUG=1 to save every generated .ll to results/debug/
-# Sawz edit: corpus files can produce small regalloc-noise regressions because
+# corpus files can produce small regalloc-noise regressions because
 # PUBLIC_SEED pseudos extend vreg liveness and change register pressure. Allow
 # up to CORPUS_TOL extra ss instructions for corpus-sourced tests; gen_ir.py
 # tests use strict 0 tolerance because their patterns are purpose-built.
@@ -104,7 +104,7 @@ for i in $(seq 1 "$N_TESTS"); do
 
     # 1. Choose / generate source IR
     # Priority: csmith (1-in-4) > corpus file > gen_ir.py
-    # Sawz edit: track source type to apply appropriate oracle tolerance.
+    # track source type to apply appropriate oracle tolerance.
     SRC_TYPE="gen"
     if [ "$HAVE_CSMITH" -eq 1 ] && [ $(( i % 4 )) -eq 0 ]; then
         csmith > /tmp/ptex_src.c 2>/dev/null
@@ -151,7 +151,7 @@ for i in $(seq 1 "$N_TESTS"); do
 
     ann_ss=$(count_ss /tmp/ptex_ann.o)
 
-    # Sawz edit: apply tolerance based on source type.
+    # apply tolerance based on source type:
     # Corpus/csmith files get CORPUS_TOL slack because PUBLIC_SEED pseudos extend
     # vreg liveness and can shift regalloc by a few instructions. gen_ir.py tests
     # use strict 0 tolerance since their IR is purpose-built for this pipeline.
@@ -179,7 +179,6 @@ echo "────────────────────────�
 echo "  Passed:      $pass / $N_TESTS"
 echo "  Crashes:     $crash"
 echo "  Regressions: $regression"
-# Sawz edit: use if-then to avoid non-zero exit when conditions are false
 if [ "$crash" -gt 0 ];      then echo "  Crash inputs:      $CRASHES_DIR"; fi
 if [ "$regression" -gt 0 ]; then echo "  Regression inputs: $REGRESSIONS_DIR"; fi
 

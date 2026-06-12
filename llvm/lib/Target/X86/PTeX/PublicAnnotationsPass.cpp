@@ -1,4 +1,4 @@
-// Sawz edit: New file. PublicAnnotationsPass — MachineFunctionPass that runs in
+// PublicAnnotationsPass — MachineFunctionPass that runs in
 // addPreRegAlloc. Reads the ProteanMachineFunctionInfo side table of IR-annotated
 // public vregs and inserts a PUBLIC_SEED pseudo for each one at the correct
 // position in the MBB (after the def if local, at block entry if live-in).
@@ -42,7 +42,7 @@ public:
 char X86PublicAnnotations::ID = 0;
 
 bool X86PublicAnnotations::runOnMachineFunction(MachineFunction &MF) {
-  // Sawz edit: retrieve the set of public vregs recorded during instruction selection.
+  // retrieve the set of public vregs recorded during iSel
   auto *PMFI = MF.getInfo<ProteanMachineFunctionInfo>();
   if (!PMFI || PMFI->getPublicVRegs().empty())
     return false;
@@ -54,26 +54,22 @@ bool X86PublicAnnotations::runOnMachineFunction(MachineFunction &MF) {
   for (Register VReg : PMFI->getPublicVRegs()) {
     MachineInstr *DefMI = MRI.getVRegDef(VReg);
 
-    // Sawz edit: skip vregs with no definition — these arise when the annotated
-    // IR value was DCE'd by the selector (e.g. poison from an out-of-range shift)
-    // or when the selector recorded an invalid vreg in the side-table. Inserting
-    // a use of an undefined vreg crashes LiveVariables::HandleVirtRegUse.
+    // skip vregs with no definition -- IR value was DCE'd by the selector (e.g. poison from an out-of-range shift)
+    // or when the selector recorded an invalid vreg in the side-table.
     if (!DefMI)
       continue;
 
     MachineBasicBlock *MBB = DefMI->getParent();
     MachineBasicBlock::iterator InsertPoint = std::next(DefMI->getIterator());
 
-    // Sawz edit: LLVM requires all PHI instructions to precede all non-PHI
-    // instructions in a block. If the def is a PHI, advance past any trailing
-    // PHIs so PUBLIC_SEED lands after the entire PHI group, not inside it.
+    // LLVM requires all PHI instructions to precede all non-PHI instructions in a block 
     if (DefMI->isPHI()) {
       while (InsertPoint != MBB->end() && InsertPoint->isPHI())
         ++InsertPoint;
     }
 
-    // Sawz edit: build the PUBLIC_SEED pseudo with VReg as an implicit use.
-    // setFlag(TPEPubM) is set so PTeXAnalysis::initPublicInstr picks it up.
+    // build the PUBLIC_SEED pseudo with VReg as an implicit use
+    // setFlag(TPEPubM) is set so PTeXAnalysis::initPublicInstr picks it up
     MachineInstr *Seed =
         BuildMI(*MBB, InsertPoint, DebugLoc(), TII->get(X86::PUBLIC_SEED))
             .addReg(VReg, RegState::Implicit)
@@ -85,7 +81,6 @@ bool X86PublicAnnotations::runOnMachineFunction(MachineFunction &MF) {
   return Changed;
 }
 
-// Sawz edit: pass registration following the X86AnnotatePublic.cpp pattern.
 INITIALIZE_PASS_BEGIN(X86PublicAnnotations, PASS_KEY "-pass",
                       "X86 Protean Public Annotations pass", false, false)
 INITIALIZE_PASS_END(X86PublicAnnotations, PASS_KEY "-pass",

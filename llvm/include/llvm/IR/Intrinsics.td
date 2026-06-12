@@ -1698,9 +1698,8 @@ def int_donothing : DefaultAttrsIntrinsic<[], [], [IntrNoMem, IntrWillReturn]>;
 // which specify that infinite loops must be preserved.
 def int_sideeffect : DefaultAttrsIntrinsic<[], [], [IntrInaccessibleMemOnly, IntrWillReturn]>;
 
-// Sawz edit: Protean/ProtCC public-register annotation intrinsic.
+// Protean/ProtCC public-register annotation intrinsic.
 // Consumed entirely during instruction selection (SelectionDAGBuilder); emits no code.
-// Sawz edit: changed from llvm_anyint_ty to llvm_any_ty so pointer arguments
 // can be passed directly without a ptrtoint cast.
 def int_protean_markpublic : DefaultAttrsIntrinsic<[], [llvm_any_ty], [IntrNoMem, IntrWillReturn]>;
 

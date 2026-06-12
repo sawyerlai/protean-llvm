@@ -109,7 +109,7 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeX86Target() {
   initializeX86ArgumentStackSlotPassPass(PR);
   initializeX86PTeXPass(PR);
   initializeX86AnnotatePointersPass(PR);
-  // Sawz edit: register Protean annotation pipeline passes.
+  // register Protean annotation pipeline passes.
   initializeX86PublicAnnotationsPass(PR);
   initializeX86ErasePTeXPseudosPass(PR);
 }
@@ -438,10 +438,9 @@ TargetPassConfig *X86TargetMachine::createPassConfig(PassManagerBase &PM) {
 MachineFunctionInfo *X86TargetMachine::createMachineFunctionInfo(
     BumpPtrAllocator &Allocator, const Function &F,
     const TargetSubtargetInfo *STI) const {
-  // Sawz edit: return ProteanMachineFunctionInfo (subclass of X86MachineFunctionInfo)
-  // so the Protean public-register annotation pipeline can store annotated vregs.
-  // MF.getInfo<X86MachineFunctionInfo>() still works via the upcast.
-  // return X86MachineFunctionInfo::create<X86MachineFunctionInfo>(Allocator, F, STI);
+  // return ProteanMachineFunctionInfo so the Protean public-register annotation pipeline can store annotated vregs
+  // MF.getInfo<X86MachineFunctionInfo>() still works via the upcast
+  // return X86MachineFunctionInfo::create<X86MachineFunctionInfo>(Allocator, F, STI)
   return ProteanMachineFunctionInfo::create<ProteanMachineFunctionInfo>(Allocator, F,
                                                                         STI);
 }
@@ -543,9 +542,7 @@ void X86PassConfig::addPreRegAlloc() {
   addPass(createX86FlagsCopyLoweringPass());
   addPass(createX86DynAllocaExpander());
 
-  // Sawz edit: insert PublicAnnotationsPass before the experimental PTeX pre-RA pass.
-  // Reads the ProteanMachineFunctionInfo side table (populated during ISel) and
-  // inserts PUBLIC_SEED pseudos so PTeXAnalysis Stage 1 can seed physreg publicness.
+  // insert PublicAnnotationsPass before the experimental PTeX pre-RA pass
   addPass(createX86PublicAnnotationsPass());
 
   // PTEX-EXPERIMENTAL: LLT printing.
@@ -616,7 +613,7 @@ void X86PassConfig::addPreEmitPass() {
   // PTEX-TODO: Can re-enable instrumentation or assert no instrumentation required to find LLVM bugs.
   addPass(createX86PTeXPass(/*Instrument*/false));
 
-  // Sawz edit: erase all PUBLIC_SEED pseudos after Stage 2 analysis has read them.
+  // erase all PUBLIC_SEED pseudos after Stage 2 analysis has read them
   addPass(createX86ErasePTeXPseudosPass());
 }
 
